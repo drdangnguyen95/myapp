@@ -37,7 +37,7 @@
 <p class="hint">
   Dùng bàn phím máy tính để chơi. Hàng <b>Z X C V B N M</b> (phím đen: <b>S D G H J</b>) là quãng 3;
   hàng <b>Q W E R T Y U</b> (phím đen: <b>2 3 5 6 7</b>) là quãng 4; <b>I O P</b> (phím đen <b>9 0</b>) nối tiếp sang quãng 5.
-  Giữ <b>Space</b> để đạp pedal (sustain). <b>← →</b> dịch quãng tám. Cũng có thể bấm chuột / chạm màn hình.
+  Giữ <b>Space</b> để đạp pedal (sustain). <b>← →</b> dịch quãng tám. Cũng có thể bấm chuột / chạm màn hình. Dùng <b>Ghi âm</b> để thu lại và <b>Phát lại</b> để nghe.
 </p>
 
 <div class="controls">
@@ -53,6 +53,14 @@
   <label>Vang <input id="reverb" type="range" min="0" max="1" step="0.01" value="0.25"></label>
   <label>Quãng tám <button id="octDown">−</button><span id="octVal">0</span><button id="octUp">+</button></label>
   <label><input id="showLabels" type="checkbox" checked> Hiện phím</label>
+</div>
+
+<div class="controls">
+  <button id="recBtn">⏺ Ghi âm</button>
+  <button id="playBtn" disabled>▶ Phát lại</button>
+  <button id="stopBtn" disabled>⏹ Dừng</button>
+  <button id="clearBtn" disabled>🗑 Xoá</button>
+  <span id="recInfo" style="color:var(--muted);font-size:.9rem">Chưa có bản ghi</span>
 </div>
 
 <div class="now" id="now">&nbsp;</div>
@@ -120,11 +128,12 @@
   const sustained = new Set();
   let pedal = false, octShift = 0;
 
-  function startNote(midi) {
+  function startNote(midi, oct = octShift) {
+    logEv('on', midi, oct);
     initAudio();
     stopVoice(midi, true);
     const t = TIMBRES[timbre.value], now = ctx.currentTime;
-    const freq = 440 * Math.pow(2, (midi + 12 * octShift - 69) / 12);
+    const freq = 440 * Math.pow(2, (midi + 12 * oct - 69) / 12);
     const env = ctx.createGain();
     const peak = 0.35 / Math.sqrt(t.partials.length);
     env.gain.setValueAtTime(0, now);
@@ -145,7 +154,7 @@
     });
     voices.set(midi, { env, oscs, t });
     setActive(midi, true);
-    $('now').textContent = noteName(midi + 12 * octShift);
+    $('now').textContent = noteName(midi + 12 * oct);
   }
 
   function releaseVoice(v, extra = 0) {
@@ -162,15 +171,72 @@
     releaseVoice(v, immediate ? -v.t.release + 0.02 : 0);
   }
   function stopNote(midi) {
+    logEv('off', midi);
     setActive(midi, false);
     if (!voices.has(midi)) return;
     if (pedal) { sustained.add(midi); return; }
     stopVoice(midi);
   }
   function setPedal(on) {
+    logEv('pedal', on);
     pedal = on;
     if (!on) { sustained.forEach(m => { if (!held.has(m)) stopVoice(m); }); sustained.clear(); }
   }
+
+  // ---------- Ghi âm / phát lại ----------
+  let recording = false, recStart = 0, take = [], playing = false, timers = [];
+  const recBtn = $('recBtn'), playBtn = $('playBtn'), stopBtn = $('stopBtn'), clearBtn = $('clearBtn'), recInfo = $('recInfo');
+  function logEv(type, a, b) {
+    if (!recording) return;
+    take.push({ t: performance.now() - recStart, type, a, b });
+  }
+  const duration = () => take.length ? take[take.length - 1].t : 0;
+  function refreshUI() {
+    recBtn.textContent = recording ? '⏺ Đang ghi… (bấm để dừng)' : '⏺ Ghi âm';
+    recBtn.style.borderColor = recording ? '#e5484d' : '';
+    recBtn.disabled = playing;
+    playBtn.disabled = recording || playing || !take.length;
+    stopBtn.disabled = !recording && !playing;
+    clearBtn.disabled = recording || playing || !take.length;
+    if (!recording && !playing)
+      recInfo.textContent = take.length ? `${take.filter(e => e.type === 'on').length} nốt · ${(duration() / 1000).toFixed(1)}s` : 'Chưa có bản ghi';
+  }
+  function startRec() {
+    initAudio(); take = []; recording = true; recStart = performance.now();
+    // ghi lại các phím đang giữ để không mất nốt đầu
+    held.forEach(m => logEv('on', m, octShift));
+    recInfo.textContent = 'Hãy chơi đàn…'; refreshUI();
+  }
+  function stopRec() {
+    recording = false;
+    take.push({ t: performance.now() - recStart + 300, type: 'end' }); // chừa đuôi ngân
+    refreshUI();
+  }
+  function startPlay() {
+    if (!take.length) return;
+    initAudio(); playing = true; refreshUI();
+    const t0 = performance.now();
+    take.forEach(ev => timers.push(setTimeout(() => {
+      if (ev.type === 'on') startNote(ev.a, ev.b);
+      else if (ev.type === 'off') stopNote(ev.a);
+      else if (ev.type === 'pedal') setPedal(ev.a);
+      else endPlay();
+    }, ev.t)));
+    const tick = setInterval(() => {
+      if (!playing) return clearInterval(tick);
+      recInfo.textContent = `Đang phát ${((performance.now() - t0) / 1000).toFixed(1)}s / ${(duration() / 1000).toFixed(1)}s`;
+    }, 100);
+  }
+  function endPlay() {
+    timers.forEach(clearTimeout); timers = []; playing = false;
+    [...voices.keys()].forEach(m => { setActive(m, false); stopVoice(m); });
+    sustained.clear(); pedal = false;
+    refreshUI();
+  }
+  recBtn.onclick = () => recording ? stopRec() : startRec();
+  playBtn.onclick = startPlay;
+  stopBtn.onclick = () => recording ? stopRec() : endPlay();
+  clearBtn.onclick = () => { take = []; refreshUI(); };
 
   // ---------- Giao diện đàn ----------
   const piano = $('piano');
