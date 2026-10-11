@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Piano bàn phím</title>
+<style>
+  :root { --bg:#14161c; --panel:#1e222b; --text:#e8eaf0; --muted:#8b92a3; --accent:#f5a524; }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+         font-family: system-ui, "Segoe UI", sans-serif; display:flex; flex-direction:column; align-items:center; padding:24px 16px; gap:20px; }
+  h1 { margin:0; font-size:1.5rem; }
+  .hint { color:var(--muted); font-size:.9rem; text-align:center; max-width:760px; line-height:1.5; }
+  .controls { display:flex; flex-wrap:wrap; gap:16px; align-items:center; justify-content:center;
+              background:var(--panel); padding:12px 18px; border-radius:12px; }
+  .controls label { display:flex; align-items:center; gap:8px; font-size:.9rem; }
+  select, input[type=range], button { accent-color:var(--accent); }
+  select, button { background:#2a2f3a; color:var(--text); border:1px solid #3a4050; border-radius:6px; padding:5px 10px; font:inherit; }
+  button { cursor:pointer; }
+  button:hover { border-color:var(--accent); }
+  .now { min-height:2.2rem; font-size:1.6rem; font-weight:700; color:var(--accent); }
+  .wrap { width:100%; overflow-x:auto; padding-bottom:8px; }
+  .piano { position:relative; height:240px; margin:0 auto; user-select:none; touch-action:none; }
+  .key { position:absolute; top:0; display:flex; align-items:flex-end; justify-content:center;
+         border-radius:0 0 6px 6px; cursor:pointer; padding-bottom:8px; font-size:.8rem; font-weight:600; }
+  .key.white { background:linear-gradient(#fff,#e9e9ee); color:#444; height:100%; border:1px solid #999; z-index:1; }
+  .key.black { background:linear-gradient(#333,#000); color:#bbb; height:62%; z-index:2; border:1px solid #000; }
+  .key.white.active { background:linear-gradient(#ffd98a,#f5a524); }
+  .key.black.active { background:linear-gradient(#f5a524,#a86a00); color:#000; }
+  .key small { display:block; text-align:center; line-height:1.2; }
+  .key small span { color:#999; font-weight:400; font-size:.65rem; }
+  .black small span { color:#888; }
+</style>
+</head>
+<body>
+<h1>🎹 Piano bàn phím</h1>
+<p class="hint">
+  Dùng bàn phím máy tính để chơi. Hàng <b>Z X C V B N M</b> (phím đen: <b>S D G H J</b>) là quãng 3;
+  hàng <b>Q W E R T Y U</b> (phím đen: <b>2 3 5 6 7</b>) là quãng 4; <b>I O P</b> (phím đen <b>9 0</b>) nối tiếp sang quãng 5.
+  Giữ <b>Space</b> để đạp pedal (sustain). <b>← →</b> dịch quãng tám. Cũng có thể bấm chuột / chạm màn hình.
+</p>
+
+<div class="controls">
+  <label>Âm sắc
+    <select id="timbre">
+      <option value="piano">Piano</option>
+      <option value="organ">Organ</option>
+      <option value="synth">Synth</option>
+      <option value="bell">Chuông</option>
+    </select>
+  </label>
+  <label>Âm lượng <input id="vol" type="range" min="0" max="1" step="0.01" value="0.6"></label>
+  <label>Vang <input id="reverb" type="range" min="0" max="1" step="0.01" value="0.25"></label>
+  <label>Quãng tám <button id="octDown">−</button><span id="octVal">0</span><button id="octUp">+</button></label>
+  <label><input id="showLabels" type="checkbox" checked> Hiện phím</label>
+</div>
+
+<div class="now" id="now">&nbsp;</div>
+<div class="wrap"><div class="piano" id="piano"></div></div>
+
+<script>
+(() => {
+  const NOTE_NAMES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+  const isBlack = m => [1,3,6,8,10].includes(m % 12);
+  const noteName = m => NOTE_NAMES[m % 12] + (Math.floor(m / 12) - 1);
+
+  // Bố trí phím: ký tự bàn phím -> số MIDI (C3 = 48)
+  const KEYMAP = {};
+  const rows = [
+    { base: 48, keys: ['z','s','x','d','c','v','g','b','h','n','j','m'] },            // C3..B3
+    { base: 60, keys: ['q','2','w','3','e','r','5','t','6','y','7','u'] },            // C4..B4
+    { base: 72, keys: ['i','9','o','0','p'] },                                         // C5..E5
+  ];
+  rows.forEach(r => r.keys.forEach((k, i) => KEYMAP[k] = r.base + i));
+  const LOW = 48, HIGH = 76;
+  const keyLabel = {};
+  Object.entries(KEYMAP).forEach(([k, m]) => keyLabel[m] = k.toUpperCase());
+
+  // ---------- Âm thanh ----------
+  let ctx, master, dry, wet, convolver;
+  const $ = id => document.getElementById(id);
+  const vol = $('vol'), reverb = $('reverb'), timbre = $('timbre');
+
+  function initAudio() {
+    if (ctx) { if (ctx.state === 'suspended') ctx.resume(); return; }
+    ctx = new (window.AudioContext || window.webkitAudioContext)();
+    master = ctx.createGain(); master.gain.value = +vol.value;
+    const comp = ctx.createDynamicsCompressor();
+    dry = ctx.createGain(); wet = ctx.createGain();
+    convolver = ctx.createConvolver(); convolver.buffer = makeImpulse(1.8);
+    dry.connect(master); wet.connect(convolver); convolver.connect(master);
+    master.connect(comp); comp.connect(ctx.destination);
+    setReverb();
+  }
+  function makeImpulse(sec) {
+    const len = ctx.sampleRate * sec, buf = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = buf.getChannelData(c);
+      for (let i = 0; i < len; i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, 3);
+    }
+    return buf;
+  }
+  function setReverb() {
+    if (!ctx) return;
+    const r = +reverb.value;
+    dry.gain.value = 1 - r * 0.5; wet.gain.value = r;
+  }
+  vol.oninput = () => { if (master) master.gain.value = +vol.value; };
+  reverb.oninput = setReverb;
+
+  // Mỗi âm sắc: danh sách hài (tỉ lệ tần số, biên độ, kiểu sóng) + đường bao
+  const TIMBRES = {
+    piano: { partials: [[1,1,'sine'],[2,.5,'sine'],[3,.25,'sine'],[4,.12,'sine'],[5,.06,'sine']], attack:.005, decay:1.6, sustain:.0, release:.35, pedalSustain:true },
+    organ: { partials: [[1,1,'sine'],[2,.7,'sine'],[3,.4,'sine'],[4,.3,'sine'],[6,.15,'sine']], attack:.02, decay:.05, sustain:.85, release:.1 },
+    synth: { partials: [[1,1,'sawtooth'],[1.005,.6,'sawtooth']], attack:.01, decay:.3, sustain:.4, release:.25, filter:true },
+    bell:  { partials: [[1,1,'sine'],[2.76,.5,'sine'],[5.4,.3,'sine'],[8.93,.15,'sine']], attack:.002, decay:2.5, sustain:0, release:.6 },
+  };
+
+  const voices = new Map();  // midi -> voice
+  const sustained = new Set();
+  let pedal = false, octShift = 0;
+
+  function startNote(midi) {
+    initAudio();
+    stopVoice(midi, true);
+    const t = TIMBRES[timbre.value], now = ctx.currentTime;
+    const freq = 440 * Math.pow(2, (midi + 12 * octShift - 69) / 12);
+    const env = ctx.createGain();
+    const peak = 0.35 / Math.sqrt(t.partials.length);
+    env.gain.setValueAtTime(0, now);
+    env.gain.linearRampToValueAtTime(peak, now + t.attack);
+    const susLevel = Math.max(t.sustain * peak, 0.0001);
+    env.gain.exponentialRampToValueAtTime(susLevel, now + t.attack + t.decay);
+    let out = env;
+    if (t.filter) {
+      const f = ctx.createBiquadFilter(); f.type = 'lowpass';
+      f.frequency.setValueAtTime(5000, now); f.frequency.exponentialRampToValueAtTime(1200, now + .5);
+      env.connect(f); out = f;
+    }
+    out.connect(dry); out.connect(wet);
+    const oscs = t.partials.map(([ratio, amp, type]) => {
+      const o = ctx.createOscillator(), g = ctx.createGain();
+      o.type = type; o.frequency.value = freq * ratio; g.gain.value = amp;
+      o.connect(g); g.connect(env); o.start(now); return o;
+    });
+    voices.set(midi, { env, oscs, t });
+    setActive(midi, true);
+    $('now').textContent = noteName(midi + 12 * octShift);
+  }
+
+  function releaseVoice(v, extra = 0) {
+    const now = ctx.currentTime, rel = v.t.release + extra;
+    v.env.gain.cancelScheduledValues(now);
+    v.env.gain.setValueAtTime(Math.max(v.env.gain.value, 0.0001), now);
+    v.env.gain.exponentialRampToValueAtTime(0.0001, now + rel);
+    v.oscs.forEach(o => o.stop(now + rel + 0.05));
+  }
+  function stopVoice(midi, immediate) {
+    const v = voices.get(midi);
+    if (!v) return;
+    voices.delete(midi);
+    releaseVoice(v, immediate ? -v.t.release + 0.02 : 0);
+  }
+  function stopNote(midi) {
+    setActive(midi, false);
+    if (!voices.has(midi)) return;
+    if (pedal) { sustained.add(midi); return; }
+    stopVoice(midi);
+  }
+  function setPedal(on) {
+    pedal = on;
+    if (!on) { sustained.forEach(m => { if (!held.has(m)) stopVoice(m); }); sustained.clear(); }
+  }
+
+  // ---------- Giao diện đàn ----------
+  const piano = $('piano');
+  const whites = []; for (let m = LOW; m <= HIGH; m++) if (!isBlack(m)) whites.push(m);
+  const WW = 52; // bề rộng phím trắng
+  piano.style.width = whites.length * WW + 'px';
+  const els = {};
+  const whiteIndex = {}; whites.forEach((m, i) => whiteIndex[m] = i);
+
+  for (let m = LOW; m <= HIGH; m++) {
+    const el = document.createElement('div');
+    const blk = isBlack(m);
+    el.className = 'key ' + (blk ? 'black' : 'white');
+    if (blk) { el.style.width = WW * 0.62 + 'px'; el.style.left = (whiteIndex[m - 1] + 1) * WW - WW * 0.31 + 'px'; }
+    else { el.style.width = WW + 'px'; el.style.left = whiteIndex[m] * WW + 'px'; }
+    el.dataset.midi = m;
+    el.innerHTML = `<small>${keyLabel[m] || ''}<br><span>${noteName(m)}</span></small>`;
+    piano.appendChild(el); els[m] = el;
+  }
+  const setActive = (m, on) => els[m] && els[m].classList.toggle('active', on);
+
+  $('showLabels').onchange = e => piano.querySelectorAll('small').forEach(s => s.style.visibility = e.target.checked ? 'visible' : 'hidden');
+
+  function setOct(n) {
+    octShift = Math.max(-2, Math.min(2, n)); $('octVal').textContent = (octShift > 0 ? '+' : '') + octShift;
+  }
+  $('octDown').onclick = () => setOct(octShift - 1);
+  $('octUp').onclick = () => setOct(octShift + 1);
+
+  // ---------- Bàn phím máy tính ----------
+  const held = new Set();
+  addEventListener('keydown', e => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (e.code === 'Space') { if (tag !== 'button') { e.preventDefault(); initAudio(); setPedal(true); } return; }
+    if (e.key === 'ArrowLeft') { setOct(octShift - 1); e.preventDefault(); return; }
+    if (e.key === 'ArrowRight') { setOct(octShift + 1); e.preventDefault(); return; }
+    if (e.repeat) return;
+    const m = KEYMAP[e.key.toLowerCase()];
+    if (m === undefined) return;
+    held.add(m); startNote(m);
+  });
+  addEventListener('keyup', e => {
+    if (e.code === 'Space') { setPedal(false); return; }
+    const m = KEYMAP[e.key.toLowerCase()];
+    if (m === undefined) return;
+    held.delete(m); stopNote(m);
+  });
+  addEventListener('blur', () => { [...held].forEach(m => { held.delete(m); stopNote(m); }); setPedal(false); });
+
+  // ---------- Chuột / cảm ứng ----------
+  const pointers = new Map();
+  piano.addEventListener('pointerdown', e => {
+    const k = e.target.closest('.key'); if (!k) return;
+    piano.setPointerCapture(e.pointerId);
+    const m = +k.dataset.midi; pointers.set(e.pointerId, m); startNote(m);
+  });
+  piano.addEventListener('pointermove', e => {
+    if (!pointers.has(e.pointerId)) return;
+    const k = document.elementFromPoint(e.clientX, e.clientY)?.closest('.key');
+    const m = k ? +k.dataset.midi : null, prev = pointers.get(e.pointerId);
+    if (m !== null && m !== prev) { stopNote(prev); pointers.set(e.pointerId, m); startNote(m); }
+  });
+  const up = e => { if (pointers.has(e.pointerId)) { stopNote(pointers.get(e.pointerId)); pointers.delete(e.pointerId); } };
+  piano.addEventListener('pointerup', up);
+  piano.addEventListener('pointercancel', up);
+})();
+</script>
+</body>
+</html>
