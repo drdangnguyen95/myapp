@@ -21,6 +21,14 @@
   .now { min-height:1.8rem; font-size:1.4rem; font-weight:700; color:var(--accent); }
   .wrap { width:100%; overflow-x:auto; padding-bottom:8px; }
   .piano { position:relative; height:240px; margin:0 auto; user-select:none; touch-action:none; }
+  .keytable { max-width:100%; display:flex; flex-direction:column; gap:10px; align-items:center; }
+  .keytable table { border-collapse:collapse; background:var(--panel); border-radius:12px; overflow:hidden; font-size:.9rem; }
+  .keytable th, .keytable td { padding:9px 18px; text-align:left; border-bottom:1px solid #2c3140; white-space:nowrap; }
+  .keytable th { background:#262b36; font-weight:600; }
+  .keytable tr:last-child td { border-bottom:0; }
+  kbd { display:inline-block; min-width:1.7em; margin-right:4px; padding:2px 6px; text-align:center; border-radius:5px;
+        background:#2a2f3a; border:1px solid #3a4050; font:600 .85rem ui-monospace, Menlo, Consolas, monospace; }
+  .keytable { overflow-x:auto; }
   .stage { position:relative; margin:0 auto; }
   .fall { display:block; border-radius:12px 12px 0 0; }
   .key { position:absolute; top:0; display:flex; align-items:flex-end; justify-content:center;
@@ -34,7 +42,7 @@
   .key small { display:flex; flex-direction:column; align-items:center; gap:3px; line-height:1; pointer-events:none; }
   .key small b { font-size:1.05rem; font-weight:700; }
   .key small b sub { font-size:.6rem; font-weight:500; vertical-align:baseline; opacity:.6; }
-  .key small i { font-style:normal; font-size:.62rem; font-weight:600; opacity:.5; }
+  .key small i { font-style:normal; font-size:.75rem; font-weight:700; opacity:.7; }
   .white small b { color:#26262a; }
   .black small b { color:#f1f1f1; font-size:.85rem; }
   .black small i { color:#fff; }
@@ -50,11 +58,6 @@
 </head>
 <body>
 <h1>🎹 Piano bàn phím</h1>
-<p class="hint">
-  Chơi bằng bàn phím máy tính: <b>Z X C V B N M</b> (đen: <b>S D G H J</b>) là quãng 3, <b>Q W E R T Y U</b> (đen: <b>2 3 5 6 7</b>) là quãng 4,
-  <b>I O P</b> (đen: <b>9 0</b>) là quãng 5. Giữ <b>Space</b> để đạp pedal, <b>← →</b> đổi quãng tám.
-  Chọn một bài ở mục <b>Học bài hát</b>, các nốt sẽ rơi xuống đúng phím cần bấm.
-</p>
 
 <div class="controls learn">
   <div class="row">
@@ -90,6 +93,18 @@
 
 <div class="now" id="now">&nbsp;</div>
 <div class="wrap"><div class="stage" id="stage"><canvas class="fall" id="fall"></canvas><div class="piano" id="piano"></div></div></div>
+
+<div class="keytable">
+  <table>
+    <thead><tr><th>Hàng phím</th><th>Phím trắng</th><th>Phím đen</th><th>Quãng</th></tr></thead>
+    <tbody>
+      <tr><td>Hàng dưới</td><td><kbd>Z</kbd><kbd>X</kbd><kbd>C</kbd><kbd>V</kbd><kbd>B</kbd><kbd>N</kbd><kbd>M</kbd></td><td><kbd>S</kbd><kbd>D</kbd><kbd>G</kbd><kbd>H</kbd><kbd>J</kbd></td><td>C3–B3</td></tr>
+      <tr><td>Hàng trên</td><td><kbd>Q</kbd><kbd>W</kbd><kbd>E</kbd><kbd>R</kbd><kbd>T</kbd><kbd>Y</kbd><kbd>U</kbd></td><td><kbd>2</kbd><kbd>3</kbd><kbd>5</kbd><kbd>6</kbd><kbd>7</kbd></td><td>C4–B4</td></tr>
+      <tr><td>Hàng trên, bên phải</td><td><kbd>I</kbd><kbd>O</kbd><kbd>P</kbd></td><td><kbd>9</kbd><kbd>0</kbd></td><td>C5–E5</td></tr>
+    </tbody>
+  </table>
+  <p class="hint">Giữ <b>Space</b> để đạp pedal, <b>← →</b> đổi quãng tám. Chọn một bài ở mục <b>Học bài hát</b>, các nốt sẽ rơi xuống đúng phím cần bấm.</p>
+</div>
 
 <div class="controls">
   <label>Âm sắc
